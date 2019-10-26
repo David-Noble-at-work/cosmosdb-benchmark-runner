@@ -1,6 +1,7 @@
 package com.adobe.platform.core.identity.services.cosmosdb.client;
 
 import com.adobe.platform.core.identity.services.cosmosdb.util.CosmosDbException;
+import com.azure.data.cosmos.CommonsBridgeInternal;
 import com.azure.data.cosmos.ConnectionMode;
 import com.azure.data.cosmos.ConnectionPolicy;
 import com.azure.data.cosmos.ConsistencyLevel;
@@ -331,13 +332,13 @@ public class V3AsyncCosmosDbClient implements CosmosDbClient {
         Flux<List<List<String>>> keysByPartitionObs = asyncDocumentClient
             .readPartitionKeyRanges(collectionLink, generateFeedOptions(null))
             .retry()
-            .map(FeedResponse::results)
-            .flatMapIterable(item -> item)
+            .flatMapIterable(FeedResponse::results)
             .flatMap(pkRange ->
                 asyncDocumentClient
                     .queryDocuments(collectionLink, generateTopNQuery(itemsPerPartition),
                         generateFeedOptions(pkRange.id())))
             .map(a -> a.results().stream().map(Document::id).collect(Collectors.toList()))
+            .doOnError(e -> logger.error("Error occurred while getting ids for partition", e))
             .collectList().flux();
 
         return keysByPartitionObs;
@@ -410,7 +411,7 @@ public class V3AsyncCosmosDbClient implements CosmosDbClient {
         // Set RU limits to createWithRu. Note this controls the partition count.
         RequestOptions requestOptions = new RequestOptions();
         requestOptions.setOfferThroughput(createWithRu);
-        requestOptions.setConsistencyLevel(ConsistencyLevel.valueOf(consistencyLevel));
+        requestOptions.setConsistencyLevel(ConsistencyLevel.valueOf(consistencyLevel.toUpperCase()));
 
         // Build the request
         Flux<Boolean> createStatus = asyncDocumentClient
@@ -530,7 +531,7 @@ public class V3AsyncCosmosDbClient implements CosmosDbClient {
 
     private RequestOptions getRequestOptions(String pKeyStr) {
         RequestOptions options = new RequestOptions();
-        options.setConsistencyLevel(ConsistencyLevel.valueOf(cfg.consistencyLevel));
+        options.setConsistencyLevel(ConsistencyLevel.valueOf(cfg.consistencyLevel.toUpperCase()));
         if (pKeyStr != null) {
             PartitionKey partitionKey = new PartitionKey(pKeyStr);
             options.setPartitionKey(partitionKey);
@@ -569,7 +570,7 @@ public class V3AsyncCosmosDbClient implements CosmosDbClient {
     private static FeedOptions generateFeedOptions(String partitionKey) {
         FeedOptions feedOptions = new FeedOptions();
         if (partitionKey != null) {
-            feedOptions.partitionKey(new PartitionKey(partitionKey));
+            feedOptions = CommonsBridgeInternal.partitionKeyRangeIdInternal(feedOptions, partitionKey);
         }
         feedOptions.maxItemCount(10000);
         feedOptions.maxBufferedItemCount(10000);
